@@ -1,0 +1,4 @@
+construction_data/*
+*.pyc
+custom_dataset*
+.DS_store
