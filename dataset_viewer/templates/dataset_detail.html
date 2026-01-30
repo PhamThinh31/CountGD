@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}{{ split }} Dataset - Viewer{% endblock %}
+
+{% block breadcrumb %}
+<span class="text-gray-400 mx-1">/</span>
+<span class="text-sm text-gray-600">{{ split }} #{{ idx }}</span>
+{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+    <div class="flex items-center gap-2 mb-1">
+        <h1 class="text-2xl font-bold">{{ split }} Dataset</h1>
+        <span class="px-2 py-0.5 text-xs font-mono rounded bg-gray-100 text-gray-600">{{ ds.format }}</span>
+    </div>
+    <p class="text-xs text-gray-400 font-mono">{{ ds.anno }}</p>
+    <p class="text-xs text-gray-400 font-mono">root: {{ ds.root }}</p>
+</div>
+
+<!-- Stats cards -->
+<div class="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-8">
+    <div class="bg-white rounded-lg border p-4">
+        <div class="text-2xl font-bold text-blue-600">{{ "{:,}".format(ds.total_images) }}</div>
+        <div class="text-xs text-gray-500">Images</div>
+    </div>
+    <div class="bg-white rounded-lg border p-4">
+        <div class="text-2xl font-bold text-emerald-600">{{ "{:,}".format(ds.total_annotations) }}</div>
+        <div class="text-xs text-gray-500">Annotations</div>
+    </div>
+    <div class="bg-white rounded-lg border p-4">
+        <div class="text-2xl font-bold text-amber-600">{{ "{:,}".format(ds.total_exemplars) }}</div>
+        <div class="text-xs text-gray-500">Exemplars</div>
+    </div>
+    <div class="bg-white rounded-lg border p-4">
+        <div class="text-2xl font-bold text-purple-600">{{ ds.total_categories }}</div>
+        <div class="text-xs text-gray-500">Categories</div>
+    </div>
+    <div class="bg-white rounded-lg border p-4">
+        {% if ds.total_images > 0 %}
+        <div class="text-2xl font-bold text-rose-600">{{ (ds.total_annotations / ds.total_images) | round(1) }}</div>
+        {% else %}
+        <div class="text-2xl font-bold text-rose-600">0</div>
+        {% endif %}
+        <div class="text-xs text-gray-500">Avg / Image</div>
+    </div>
+</div>
+
+<!-- Objects-per-image distribution -->
+{% if histogram %}
+<div class="bg-white rounded-lg border p-5 mb-8">
+    <h2 class="text-lg font-semibold mb-3">Objects per Image Distribution</h2>
+    <div class="flex items-end gap-1 h-32">
+        {% set max_hist = histogram | map(attribute=1) | max %}
+        {% for bucket, count in histogram %}
+        <div class="flex-1 flex flex-col items-center justify-end group relative">
+            <div class="absolute -top-6 hidden group-hover:block text-xs bg-gray-800 text-white px-2 py-1 rounded whitespace-nowrap">
+                {{ bucket }}-{{ bucket + (histogram[1][0] - histogram[0][0]) if histogram | length > 1 else bucket + 1 }}: {{ count }}
+            </div>
+            <div class="w-full bg-blue-400 rounded-t transition-all hover:bg-blue-500"
+                 style="height: {{ (count / max_hist * 100) | round(1) }}%"
+                 title="{{ bucket }}: {{ count }}"></div>
+            <div class="text-[9px] text-gray-400 mt-1">{{ bucket }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Category table -->
+<div class="bg-white rounded-lg border overflow-hidden">
+    <div class="px-5 py-3 border-b bg-gray-50">
+        <h2 class="text-lg font-semibold">Categories ({{ categories | length }})</h2>
+    </div>
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="border-b bg-gray-50 text-left text-xs text-gray-500 uppercase tracking-wider">
+                    <th class="px-5 py-2">#</th>
+                    <th class="px-5 py-2">Category</th>
+                    <th class="px-5 py-2 text-right">Images</th>
+                    <th class="px-5 py-2 text-right">Annotations</th>
+                    <th class="px-5 py-2 text-right">Avg/Img</th>
+                    <th class="px-5 py-2 text-right">Min</th>
+                    <th class="px-5 py-2 text-right">Max</th>
+                    <th class="px-5 py-2" style="width:40%">Distribution</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% set max_ann_global = categories[0].annotation_count if categories else 1 %}
+                {% for cat in categories %}
+                <tr class="border-b hover:bg-blue-50 cursor-pointer transition-colors"
+                    onclick="window.location='/dataset/{{ split }}/{{ idx }}/category/{{ cat.name | urlencode }}'">
+                    <td class="px-5 py-2.5 text-gray-400">{{ loop.index }}</td>
+                    <td class="px-5 py-2.5 font-medium text-blue-600">{{ cat.name }}</td>
+                    <td class="px-5 py-2.5 text-right">{{ "{:,}".format(cat.image_count) }}</td>
+                    <td class="px-5 py-2.5 text-right font-medium">{{ "{:,}".format(cat.annotation_count) }}</td>
+                    <td class="px-5 py-2.5 text-right">{{ cat.avg_count_per_image }}</td>
+                    <td class="px-5 py-2.5 text-right text-gray-500">{{ cat.min_count }}</td>
+                    <td class="px-5 py-2.5 text-right text-gray-500">{{ cat.max_count }}</td>
+                    <td class="px-5 py-2.5">
+                        <div class="bg-gray-100 rounded-full h-3 overflow-hidden">
+                            <div class="bar-fill h-full rounded-full bg-blue-400"
+                                 style="width: {{ (cat.annotation_count / max_ann_global * 100) | round(1) }}%"></div>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

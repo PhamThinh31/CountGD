@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block title %}{{ cat.name }} - Dataset Viewer{% endblock %}
+
+{% block breadcrumb %}
+<span class="text-gray-400 mx-1">/</span>
+<a href="/dataset/{{ split }}/{{ idx }}" class="text-sm text-blue-600 hover:underline">{{ split }} #{{ idx }}</a>
+<span class="text-gray-400 mx-1">/</span>
+<span class="text-sm text-gray-600">{{ cat.name }}</span>
+{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+    <h1 class="text-2xl font-bold mb-1">{{ cat.name }}</h1>
+    <p class="text-sm text-gray-500">{{ split }} dataset, {{ ds.format }} format</p>
+</div>
+
+<!-- Stats -->
+<div class="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-6">
+    <div class="bg-white rounded-lg border p-4">
+        <div class="text-2xl font-bold text-blue-600">{{ "{:,}".format(cat.image_count) }}</div>
+        <div class="text-xs text-gray-500">Images</div>
+    </div>
+    <div class="bg-white rounded-lg border p-4">
+        <div class="text-2xl font-bold text-emerald-600">{{ "{:,}".format(cat.annotation_count) }}</div>
+        <div class="text-xs text-gray-500">Annotations</div>
+    </div>
+    <div class="bg-white rounded-lg border p-4">
+        <div class="text-2xl font-bold text-amber-600">{{ cat.avg_count_per_image }}</div>
+        <div class="text-xs text-gray-500">Avg / Image</div>
+    </div>
+    <div class="bg-white rounded-lg border p-4">
+        <div class="text-2xl font-bold text-purple-600">{{ cat.min_count }}</div>
+        <div class="text-xs text-gray-500">Min Count</div>
+    </div>
+    <div class="bg-white rounded-lg border p-4">
+        <div class="text-2xl font-bold text-rose-600">{{ cat.max_count }}</div>
+        <div class="text-xs text-gray-500">Max Count</div>
+    </div>
+</div>
+
+<!-- Distribution -->
+{% if histogram %}
+<div class="bg-white rounded-lg border p-5 mb-6">
+    <h2 class="text-sm font-semibold mb-3 text-gray-600">Objects per Image Distribution</h2>
+    <div class="flex items-end gap-1 h-28">
+        {% set max_hist = histogram | map(attribute=1) | max %}
+        {% for bucket, count in histogram %}
+        <div class="flex-1 flex flex-col items-center justify-end group relative">
+            <div class="absolute -top-6 hidden group-hover:block text-xs bg-gray-800 text-white px-2 py-1 rounded whitespace-nowrap z-10">
+                {{ bucket }}-{{ bucket + (histogram[1][0] - histogram[0][0]) if histogram | length > 1 else bucket + 1 }}: {{ count }}
+            </div>
+            <div class="w-full bg-emerald-400 rounded-t hover:bg-emerald-500 transition-all"
+                 style="height: {{ (count / max_hist * 100) | round(1) }}%"></div>
+            <div class="text-[9px] text-gray-400 mt-1">{{ bucket }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Toggle annotations -->
+<div class="flex items-center justify-between mb-4">
+    <div class="text-sm text-gray-500">
+        Showing {{ (page - 1) * per_page + 1 }}-{{ [page * per_page, total_images] | min }} of {{ total_images }} images
+    </div>
+    <label class="flex items-center gap-2 text-sm cursor-pointer select-none">
+        <input type="checkbox" id="toggleAnnotations" checked class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+        Show annotations
+    </label>
+</div>
+
+<!-- Image grid -->
+<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-3 mb-6" id="imageGrid">
+    {% for img in images %}
+    <div class="bg-white rounded-lg border overflow-hidden card hover:border-blue-300 transition-all">
+        <div class="relative aspect-square bg-gray-100">
+            <img class="annotated-img w-full h-full object-cover"
+                 src="/image/{{ split }}/{{ idx }}/{{ img.id }}?cat={{ cat.name | urlencode }}"
+                 data-annotated="/image/{{ split }}/{{ idx }}/{{ img.id }}?cat={{ cat.name | urlencode }}"
+                 data-raw="/image/{{ split }}/{{ idx }}/{{ img.id }}?draw=0"
+                 loading="lazy"
+                 alt="{{ img.file_name }}"
+                 onclick="openModal(this)">
+        </div>
+        <div class="px-2 py-1.5">
+            <div class="text-[10px] text-gray-400 truncate" title="{{ img.file_name }}">{{ img.file_name }}</div>
+            <div class="text-xs font-semibold text-gray-700">{{ img.count }} objects</div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Pagination -->
+{% if total_pages > 1 %}
+<nav class="flex items-center justify-center gap-1 mb-8">
+    {% if page > 1 %}
+    <a href="?page={{ page - 1 }}" class="px-3 py-1.5 text-sm border rounded hover:bg-gray-100">Prev</a>
+    {% endif %}
+
+    {% set start_page = [1, page - 3] | max %}
+    {% set end_page = [total_pages, page + 3] | min %}
+
+    {% if start_page > 1 %}
+    <a href="?page=1" class="px-3 py-1.5 text-sm border rounded hover:bg-gray-100">1</a>
+    {% if start_page > 2 %}<span class="px-1 text-gray-400">...</span>{% endif %}
+    {% endif %}
+
+    {% for p in range(start_page, end_page + 1) %}
+    <a href="?page={{ p }}"
+       class="px-3 py-1.5 text-sm border rounded {{ 'bg-blue-600 text-white border-blue-600' if p == page else 'hover:bg-gray-100' }}">
+        {{ p }}
+    </a>
+    {% endfor %}
+
+    {% if end_page < total_pages %}
+    {% if end_page < total_pages - 1 %}<span class="px-1 text-gray-400">...</span>{% endif %}
+    <a href="?page={{ total_pages }}" class="px-3 py-1.5 text-sm border rounded hover:bg-gray-100">{{ total_pages }}</a>
+    {% endif %}
+
+    {% if page < total_pages %}
+    <a href="?page={{ page + 1 }}" class="px-3 py-1.5 text-sm border rounded hover:bg-gray-100">Next</a>
+    {% endif %}
+</nav>
+{% endif %}
+
+<!-- Modal for full-size image -->
+<div id="imageModal" class="fixed inset-0 bg-black/80 z-50 hidden items-center justify-center p-4" onclick="closeModal(event)">
+    <div class="relative max-w-5xl max-h-[90vh]">
+        <img id="modalImg" class="max-w-full max-h-[90vh] object-contain rounded-lg">
+        <button onclick="closeModal(event, true)" class="absolute top-2 right-2 bg-white/80 hover:bg-white rounded-full w-8 h-8 flex items-center justify-center text-gray-700">&times;</button>
+    </div>
+</div>
+
+<script>
+    // Toggle annotations
+    document.getElementById('toggleAnnotations').addEventListener('change', function() {
+        const imgs = document.querySelectorAll('.annotated-img');
+        imgs.forEach(img => {
+            if (this.checked) {
+                img.src = img.dataset.annotated;
+            } else {
+                img.src = img.dataset.raw;
+            }
+        });
+    });
+
+    // Modal
+    function openModal(imgEl) {
+        const modal = document.getElementById('imageModal');
+        const modalImg = document.getElementById('modalImg');
+        modalImg.src = imgEl.src;
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+    }
+    function closeModal(e, force) {
+        if (force || e.target === document.getElementById('imageModal')) {
+            const modal = document.getElementById('imageModal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+    }
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') closeModal(null, true);
+    });
+</script>
+{% endblock %}

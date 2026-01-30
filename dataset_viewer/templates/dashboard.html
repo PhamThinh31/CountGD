@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Dataset Viewer{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+    <h1 class="text-2xl font-bold mb-1">Dataset Dashboard</h1>
+    <p class="text-sm text-gray-500 font-mono">{{ config_path }}</p>
+</div>
+
+<!-- Summary cards -->
+<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+    <div class="bg-white rounded-lg border p-5">
+        <div class="text-3xl font-bold text-blue-600">{{ datasets | length }}</div>
+        <div class="text-sm text-gray-500 mt-1">Total Datasets</div>
+    </div>
+    <div class="bg-white rounded-lg border p-5">
+        <div class="text-3xl font-bold text-emerald-600">{{ datasets | map(attribute='total_images') | sum }}</div>
+        <div class="text-sm text-gray-500 mt-1">Total Images</div>
+    </div>
+    <div class="bg-white rounded-lg border p-5">
+        <div class="text-3xl font-bold text-amber-600">{{ datasets | map(attribute='total_annotations') | sum }}</div>
+        <div class="text-sm text-gray-500 mt-1">Total Annotations</div>
+    </div>
+</div>
+
+<!-- Dataset list -->
+<div class="space-y-4">
+{% for ds in datasets %}
+    <a href="/dataset/{{ ds.split }}/{{ ds.idx }}" class="block">
+        <div class="card bg-white rounded-lg border p-5 hover:border-blue-300 transition-all">
+            <div class="flex items-start justify-between mb-3">
+                <div>
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="inline-block px-2 py-0.5 text-xs font-semibold rounded
+                            {% if ds.split == 'train' %}bg-blue-100 text-blue-700
+                            {% elif ds.split == 'val' %}bg-green-100 text-green-700
+                            {% else %}bg-orange-100 text-orange-700{% endif %}">
+                            {{ ds.split }}
+                        </span>
+                        <span class="inline-block px-2 py-0.5 text-xs font-mono rounded bg-gray-100 text-gray-600">
+                            {{ ds.format }}
+                        </span>
+                    </div>
+                    <div class="text-xs text-gray-400 font-mono truncate max-w-lg" title="{{ ds.anno }}">{{ ds.anno }}</div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
+                <div>
+                    <div class="text-xl font-bold">{{ "{:,}".format(ds.total_images) }}</div>
+                    <div class="text-xs text-gray-500">Images</div>
+                </div>
+                <div>
+                    <div class="text-xl font-bold">{{ "{:,}".format(ds.total_annotations) }}</div>
+                    <div class="text-xs text-gray-500">Annotations</div>
+                </div>
+                <div>
+                    <div class="text-xl font-bold">{{ "{:,}".format(ds.total_exemplars) }}</div>
+                    <div class="text-xs text-gray-500">Exemplars</div>
+                </div>
+                <div>
+                    <div class="text-xl font-bold">{{ ds.total_categories }}</div>
+                    <div class="text-xs text-gray-500">Categories</div>
+                </div>
+            </div>
+
+            {% if ds.top_categories %}
+            <div class="text-xs text-gray-500 mb-2">Top categories:</div>
+            <div class="space-y-1">
+                {% set max_ann = ds.top_categories[0].annotation_count if ds.top_categories else 1 %}
+                {% for cat in ds.top_categories %}
+                <div class="flex items-center gap-2">
+                    <div class="w-24 text-xs truncate text-gray-700" title="{{ cat.name }}">{{ cat.name }}</div>
+                    <div class="flex-1 bg-gray-100 rounded-full h-4 overflow-hidden">
+                        <div class="bar-fill h-full rounded-full bg-blue-400" style="width: {{ (cat.annotation_count / max_ann * 100) | round(1) }}%"></div>
+                    </div>
+                    <div class="text-xs text-gray-500 w-16 text-right">{{ "{:,}".format(cat.annotation_count) }}</div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+    </a>
+{% endfor %}
+</div>
+{% endblock %}
