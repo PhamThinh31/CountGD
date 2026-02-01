@@ -58,29 +58,58 @@
 </div>
 {% endif %}
 
-<!-- Toggle annotations -->
-<div class="flex items-center justify-between mb-4">
+<!-- Visualization controls -->
+<div class="flex items-center justify-between mb-4 flex-wrap gap-3">
     <div class="text-sm text-gray-500">
         Showing {{ (page - 1) * per_page + 1 }}-{{ [page * per_page, total_images] | min }} of {{ total_images }} images
     </div>
-    <label class="flex items-center gap-2 text-sm cursor-pointer select-none">
-        <input type="checkbox" id="toggleAnnotations" checked class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
-        Show annotations
-    </label>
+    <div class="flex items-center gap-3 bg-white border rounded-lg px-3 py-1.5">
+        <span class="text-xs text-gray-400 font-medium">Layers:</span>
+        <label class="flex items-center gap-1.5 text-xs cursor-pointer select-none">
+            <input type="checkbox" id="toggleConverted" checked
+                   class="rounded border-gray-300 text-red-500 focus:ring-red-400 w-3.5 h-3.5">
+            <span class="inline-block w-2.5 h-2.5 rounded-full bg-red-500"></span>
+            Converted
+        </label>
+        {% if has_raw_yolo %}
+        <label class="flex items-center gap-1.5 text-xs cursor-pointer select-none">
+            <input type="checkbox" id="toggleYolo"
+                   class="rounded border-gray-300 text-green-500 focus:ring-green-400 w-3.5 h-3.5">
+            <span class="inline-block w-2.5 h-2.5 rounded-full bg-green-500"></span>
+            Raw YOLO
+        </label>
+        {% endif %}
+    </div>
 </div>
+
+{% if has_raw_yolo %}
+<div class="flex items-center gap-5 mb-4 text-xs text-gray-500">
+    <div class="flex items-center gap-1.5">
+        <span class="inline-block w-3 h-3 rounded-full bg-red-500"></span>
+        Converted center points
+    </div>
+    <div class="flex items-center gap-1.5">
+        <span class="inline-block w-3 h-3 rounded border-2 border-green-500"></span>
+        Raw YOLO bounding boxes
+    </div>
+    <div class="flex items-center gap-1.5">
+        <span class="inline-block w-3 h-3 rounded border-2 border-blue-500"></span>
+        Exemplar boxes
+    </div>
+</div>
+{% endif %}
 
 <!-- Image grid -->
 <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-3 mb-6" id="imageGrid">
     {% for img in images %}
     <div class="bg-white rounded-lg border overflow-hidden card hover:border-blue-300 transition-all">
-        <div class="relative aspect-square bg-gray-100">
+        <div class="relative aspect-square bg-gray-100 cursor-pointer"
+             onclick="openModal('{{ split }}', {{ idx }}, {{ img.id }}, '{{ cat.name | urlencode }}', {{ img.width }}, {{ img.height }}, '{{ img.file_name }}', {{ img.count }})">
             <img class="annotated-img w-full h-full object-cover"
                  src="/image/{{ split }}/{{ idx }}/{{ img.id }}?cat={{ cat.name | urlencode }}"
-                 data-annotated="/image/{{ split }}/{{ idx }}/{{ img.id }}?cat={{ cat.name | urlencode }}"
-                 data-raw="/image/{{ split }}/{{ idx }}/{{ img.id }}?draw=0"
+                 data-img-id="{{ img.id }}"
                  loading="lazy"
-                 alt="{{ img.file_name }}"
-                 onclick="openModal(this)">
+                 alt="{{ img.file_name }}">
         </div>
         <div class="px-2 py-1.5">
             <div class="text-[10px] text-gray-400 truncate" title="{{ img.file_name }}">{{ img.file_name }}</div>
@@ -123,42 +152,186 @@
 </nav>
 {% endif %}
 
-<!-- Modal for full-size image -->
+<!-- Full-size modal with debug panel -->
 <div id="imageModal" class="fixed inset-0 bg-black/80 z-50 hidden items-center justify-center p-4" onclick="closeModal(event)">
-    <div class="relative max-w-5xl max-h-[90vh]">
-        <img id="modalImg" class="max-w-full max-h-[90vh] object-contain rounded-lg">
-        <button onclick="closeModal(event, true)" class="absolute top-2 right-2 bg-white/80 hover:bg-white rounded-full w-8 h-8 flex items-center justify-center text-gray-700">&times;</button>
+    <div class="relative flex gap-4 max-w-[95vw] max-h-[90vh]" onclick="event.stopPropagation()">
+        <div class="relative flex-shrink-0">
+            <img id="modalImg" class="max-h-[85vh] object-contain rounded-lg">
+            <button onclick="closeModal(null, true)"
+                    class="absolute top-2 right-2 bg-white/80 hover:bg-white rounded-full w-8 h-8 flex items-center justify-center text-gray-700 text-lg">&times;</button>
+        </div>
+
+        <!-- Debug side panel (always shown in modal, content depends on raw_yolo availability) -->
+        <div id="debugPanel" class="w-72 bg-white rounded-lg p-4 overflow-y-auto max-h-[85vh] flex-shrink-0">
+            <h3 class="font-bold text-sm mb-3">Debug Info</h3>
+            <div class="space-y-3 text-xs">
+                <div>
+                    <div class="text-gray-400 mb-0.5">Filename</div>
+                    <div id="dbgFilename" class="font-mono text-gray-700 break-all"></div>
+                </div>
+                <div>
+                    <div class="text-gray-400 mb-0.5">Dimensions</div>
+                    <div id="dbgDimensions" class="font-mono text-gray-700"></div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="bg-red-50 rounded p-2">
+                        <div class="text-red-400 mb-0.5">Converted</div>
+                        <div id="dbgConvertedCount" class="font-bold text-red-600 text-lg"></div>
+                    </div>
+                    <div id="dbgYoloBox" class="bg-green-50 rounded p-2 {{ 'hidden' if not has_raw_yolo }}">
+                        <div class="text-green-400 mb-0.5">Raw YOLO</div>
+                        <div id="dbgYoloCount" class="font-bold text-green-600 text-lg"></div>
+                    </div>
+                </div>
+
+                <div id="dbgMatchStatus"></div>
+
+                <div id="dbgSourceSection" class="{{ 'hidden' if not has_raw_yolo }}">
+                    <div class="text-gray-400 mb-0.5">Source dataset</div>
+                    <div id="dbgSource" class="font-mono text-gray-700 break-all"></div>
+                </div>
+                <div id="dbgLabelSection" class="{{ 'hidden' if not has_raw_yolo }}">
+                    <div class="text-gray-400 mb-0.5">Label file</div>
+                    <div id="dbgLabelPath" class="font-mono text-gray-500 break-all text-[10px]"></div>
+                </div>
+            </div>
+
+            <!-- Modal layer toggles -->
+            <div class="mt-4 pt-3 border-t space-y-2">
+                <h4 class="font-bold text-xs text-gray-500">Visualization</h4>
+                <label class="flex items-center gap-2 text-xs cursor-pointer">
+                    <input type="checkbox" id="modalToggleConverted" checked class="rounded border-gray-300 text-red-500 w-3.5 h-3.5">
+                    <span class="inline-block w-2 h-2 rounded-full bg-red-500"></span>
+                    Converted points
+                </label>
+                {% if has_raw_yolo %}
+                <label class="flex items-center gap-2 text-xs cursor-pointer">
+                    <input type="checkbox" id="modalToggleYolo" class="rounded border-gray-300 text-green-500 w-3.5 h-3.5">
+                    <span class="inline-block w-2 h-2 rounded-full bg-green-500"></span>
+                    Raw YOLO boxes
+                </label>
+                {% endif %}
+                <label class="flex items-center gap-2 text-xs cursor-pointer">
+                    <input type="checkbox" id="modalToggleClean" class="rounded border-gray-300 text-gray-500 w-3.5 h-3.5">
+                    Clean (no overlay)
+                </label>
+            </div>
+        </div>
     </div>
 </div>
 
 <script>
-    // Toggle annotations
-    document.getElementById('toggleAnnotations').addEventListener('change', function() {
-        const imgs = document.querySelectorAll('.annotated-img');
-        imgs.forEach(img => {
-            if (this.checked) {
-                img.src = img.dataset.annotated;
-            } else {
-                img.src = img.dataset.raw;
+    const SPLIT = '{{ split }}';
+    const IDX = {{ idx }};
+    const CAT = '{{ cat.name | urlencode }}';
+    const HAS_RAW_YOLO = {{ 'true' if has_raw_yolo else 'false' }};
+
+    // ── Grid toggles ──
+    let showConverted = true;
+    let showYolo = false;
+
+    function buildGridUrl(imgId) {
+        return `/image/${SPLIT}/${IDX}/${imgId}?cat=${CAT}&draw=${showConverted ? '1' : '0'}&draw_yolo=${showYolo ? '1' : '0'}`;
+    }
+
+    function refreshGrid() {
+        document.querySelectorAll('.annotated-img').forEach(img => {
+            img.src = buildGridUrl(img.dataset.imgId);
+        });
+    }
+
+    const chkConverted = document.getElementById('toggleConverted');
+    if (chkConverted) chkConverted.addEventListener('change', function() { showConverted = this.checked; refreshGrid(); });
+
+    const chkYolo = document.getElementById('toggleYolo');
+    if (chkYolo) chkYolo.addEventListener('change', function() { showYolo = this.checked; refreshGrid(); });
+
+    // ── Modal ──
+    let modalState = {};
+
+    function buildModalUrl() {
+        const clean = document.getElementById('modalToggleClean').checked;
+        const draw = clean ? '0' : (document.getElementById('modalToggleConverted').checked ? '1' : '0');
+        const yoloEl = document.getElementById('modalToggleYolo');
+        const yolo = clean ? '0' : (yoloEl ? (yoloEl.checked ? '1' : '0') : '0');
+        return `/image/${modalState.split}/${modalState.idx}/${modalState.imgId}?cat=${modalState.cat}&draw=${draw}&draw_yolo=${yolo}`;
+    }
+
+    function refreshModal() {
+        document.getElementById('modalImg').src = buildModalUrl();
+    }
+
+    function openModal(split, idx, imgId, cat, w, h, filename, count) {
+        modalState = { split, idx, imgId, cat, w, h, filename, count };
+
+        document.getElementById('modalToggleConverted').checked = showConverted;
+        const yoloEl = document.getElementById('modalToggleYolo');
+        if (yoloEl) yoloEl.checked = showYolo;
+        document.getElementById('modalToggleClean').checked = false;
+
+        document.getElementById('modalImg').src = buildModalUrl();
+        document.getElementById('imageModal').classList.remove('hidden');
+        document.getElementById('imageModal').classList.add('flex');
+
+        // Fill debug info
+        document.getElementById('dbgFilename').textContent = filename;
+        document.getElementById('dbgDimensions').textContent = `${w} x ${h}`;
+        document.getElementById('dbgConvertedCount').textContent = count;
+
+        if (HAS_RAW_YOLO) {
+            document.getElementById('dbgYoloCount').textContent = '...';
+            document.getElementById('dbgMatchStatus').innerHTML = '';
+            document.getElementById('dbgSource').textContent = '...';
+            document.getElementById('dbgLabelPath').textContent = '...';
+
+            fetch(`/api/yolo_info/${split}/${idx}/${imgId}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.found) {
+                        document.getElementById('dbgYoloCount').textContent = data.raw_yolo_count;
+                        document.getElementById('dbgSource').textContent = data.dataset_folder + ' / ' + data.split;
+                        document.getElementById('dbgLabelPath').textContent = data.label_path;
+
+                        if (data.match) {
+                            document.getElementById('dbgMatchStatus').innerHTML =
+                                '<div class="bg-green-50 text-green-700 rounded px-2 py-1 font-medium text-xs">Counts match</div>';
+                        } else {
+                            document.getElementById('dbgMatchStatus').innerHTML =
+                                '<div class="bg-red-50 text-red-700 rounded px-2 py-1 font-medium text-xs">MISMATCH raw=' + data.raw_yolo_count + ' vs converted=' + data.converted_count + '</div>';
+                        }
+                    } else {
+                        document.getElementById('dbgYoloCount').textContent = 'N/A';
+                        document.getElementById('dbgSource').textContent = 'Not in raw YOLO index';
+                        document.getElementById('dbgLabelPath').textContent = '-';
+                    }
+                });
+        }
+    }
+
+    function closeModal(e, force) {
+        if (force || (e && e.target === document.getElementById('imageModal'))) {
+            document.getElementById('imageModal').classList.add('hidden');
+            document.getElementById('imageModal').classList.remove('flex');
+        }
+    }
+
+    // Modal toggle listeners
+    ['modalToggleConverted', 'modalToggleYolo', 'modalToggleClean'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('change', function() {
+            if (id === 'modalToggleClean' && this.checked) {
+                document.getElementById('modalToggleConverted').checked = false;
+                const y = document.getElementById('modalToggleYolo');
+                if (y) y.checked = false;
+            } else if (id !== 'modalToggleClean') {
+                document.getElementById('modalToggleClean').checked = false;
             }
+            refreshModal();
         });
     });
 
-    // Modal
-    function openModal(imgEl) {
-        const modal = document.getElementById('imageModal');
-        const modalImg = document.getElementById('modalImg');
-        modalImg.src = imgEl.src;
-        modal.classList.remove('hidden');
-        modal.classList.add('flex');
-    }
-    function closeModal(e, force) {
-        if (force || e.target === document.getElementById('imageModal')) {
-            const modal = document.getElementById('imageModal');
-            modal.classList.add('hidden');
-            modal.classList.remove('flex');
-        }
-    }
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') closeModal(null, true);
     });
