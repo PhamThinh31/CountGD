@@ -353,6 +353,109 @@ def crop(sample, crop_width, crop_height, overlap_width, overlap_height):
     return samples_cropped, boundaries_x, boundaries_y
 
 
+# =============================================================================
+# Upgrade 7: Multi-Scale Test-Time Augmentation (TTA)
+# =============================================================================
+def multiscale_tta_forward(
+    model, sample, exemplars, labels, caption, args, device,
+    box_threshold, text_threshold, tokenized_captions_sample,
+):
+    """
+    Run model at multiple scales and merge results via NMS.
+
+    Args:
+        sample: single image tensor (C, H, W), already normalized
+        exemplars: exemplar boxes for this sample (N, 4) in pixel coords
+        labels: label tensor for this sample
+        caption: text caption string
+        args: config args with tta_scales, tta_nms_threshold
+        device: torch device
+        box_threshold: confidence threshold for box filtering
+        text_threshold: threshold for text token filtering
+        tokenized_captions_sample: input_ids for this sample (to find end_idx)
+    Returns:
+        pred_cnt: merged count after NMS
+    """
+    from torchvision.ops import nms
+    import models.GroundingDINO.box_ops as box_ops
+
+    scales = getattr(args, 'tta_scales', [0.75, 1.0, 1.25])
+    tta_nms_thresh = getattr(args, 'tta_nms_threshold', 0.5)
+
+    _, orig_h, orig_w = sample.shape
+    all_boxes = []
+    all_logits = []
+
+    # Find end_idx for text token filtering
+    end_idx = 1
+    for token_ind in range(len(tokenized_captions_sample)):
+        idx = tokenized_captions_sample[token_ind]
+        if idx == 1012:
+            end_idx = token_ind
+            break
+
+    for scale in scales:
+        # Resize the sample
+        target_h = max(1, int(orig_h * scale))
+        target_w = max(1, int(orig_w * scale))
+        scaled_sample = torch.nn.functional.interpolate(
+            sample.unsqueeze(0), size=(target_h, target_w),
+            mode='bilinear', align_corners=False
+        ).squeeze(0)
+
+        # Scale exemplar boxes proportionally
+        scale_x = target_w / orig_w
+        scale_y = target_h / orig_h
+        scaled_exemplars = exemplars.clone()
+        if scaled_exemplars.shape[0] > 0:
+            scaled_exemplars[:, [0, 2]] = scaled_exemplars[:, [0, 2]] * scale_x
+            scaled_exemplars[:, [1, 3]] = scaled_exemplars[:, [1, 3]] * scale_y
+
+        with torch.cuda.amp.autocast(enabled=args.amp):
+            outputs = model(
+                nested_tensor_from_tensor_list([scaled_sample]),
+                [scaled_exemplars],
+                [labels],
+                captions=[caption],
+            )
+
+        scale_logits = outputs['pred_logits'][0].sigmoid()
+        scale_boxes = outputs['pred_boxes'][0]
+
+        # Apply box threshold
+        box_mask = scale_logits.max(dim=-1).values > box_threshold
+        scale_logits = scale_logits[box_mask, :]
+        scale_boxes = scale_boxes[box_mask, :]
+
+        # Apply text threshold
+        if scale_logits.shape[0] > 0:
+            text_mask = (scale_logits[:, 1:end_idx] > text_threshold).sum(dim=-1) == (end_idx - 1)
+            scale_logits = scale_logits[text_mask, :]
+            scale_boxes = scale_boxes[text_mask, :]
+
+        # Boxes are in normalized [0,1] coords, so they map back directly
+        all_logits.append(scale_logits)
+        all_boxes.append(scale_boxes)
+
+    # Concatenate all predictions across scales
+    if len(all_boxes) == 0 or all(b.shape[0] == 0 for b in all_boxes):
+        return 0
+
+    merged_logits = torch.cat(all_logits, dim=0)
+    merged_boxes = torch.cat(all_boxes, dim=0)
+
+    if merged_boxes.shape[0] == 0:
+        return 0
+
+    # Apply NMS to remove cross-scale duplicates
+    # Convert from cxcywh to xyxy for NMS
+    xyxy_boxes = box_ops.box_cxcywh_to_xyxy(merged_boxes)
+    scores = merged_logits.max(dim=-1).values
+    keep = nms(xyxy_boxes, scores, tta_nms_thresh)
+
+    return len(keep)
+
+
 def get_count_errs(
     model,
     args,
@@ -941,29 +1044,65 @@ def evaluate(
             input_captions = [" ." for target in targets]
 
         print("input_captions: " + str(input_captions))
-        with torch.cuda.amp.autocast(enabled=args.amp):
-            # Use 'label' of 0 at inference since only input a single text prompt instead of all COCO classes.
-            outputs = model(
-                samples,
-                exemplars,
-                [torch.tensor([0]).to(device) for _ in targets],
-                captions=input_captions,
-            )
 
-            tokenized_captions = outputs["token"]
-            abs_errs += get_count_errs(
-                model,
-                args,
-                samples,
-                exemplars,
-                outputs,
-                args.box_threshold,
-                args.text_threshold,
-                targets,
-                tokenized_captions,
-                input_captions,
-                predictor=predictor,
-            )
+        # Upgrade 7: Multi-scale TTA path
+        use_tta = getattr(args, 'use_multiscale_tta', False)
+        if use_tta:
+            samples_list = samples.to_img_list()
+            for sample_ind in range(len(targets)):
+                sample = samples_list[sample_ind]
+                sample_exemplars = exemplars[sample_ind]
+                labels_for_tta = torch.tensor([0]).to(device)
+                caption_for_tta = input_captions[sample_ind]
+
+                # Tokenize to get end_idx for TTA
+                from transformers import AutoTokenizer
+                _tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+                _tokenized = _tokenizer(caption_for_tta, return_tensors="pt")
+                _input_ids = _tokenized["input_ids"][0]
+
+                tta_count = multiscale_tta_forward(
+                    model, sample, sample_exemplars, labels_for_tta,
+                    caption_for_tta, args, device,
+                    args.box_threshold, args.text_threshold, _input_ids,
+                )
+                gt_count = targets[sample_ind]["labels_uncropped"].shape[0]
+                print(f"[TTA] Pred Count: {tta_count}, GT Count: {gt_count}")
+                abs_errs.append(np.abs(gt_count - tta_count))
+
+            # Still need a standard forward pass for COCO evaluator
+            with torch.cuda.amp.autocast(enabled=args.amp):
+                outputs = model(
+                    samples,
+                    exemplars,
+                    [torch.tensor([0]).to(device) for _ in targets],
+                    captions=input_captions,
+                )
+        else:
+            # Standard (non-TTA) inference path
+            with torch.cuda.amp.autocast(enabled=args.amp):
+                # Use 'label' of 0 at inference since only input a single text prompt instead of all COCO classes.
+                outputs = model(
+                    samples,
+                    exemplars,
+                    [torch.tensor([0]).to(device) for _ in targets],
+                    captions=input_captions,
+                )
+
+                tokenized_captions = outputs["token"]
+                abs_errs += get_count_errs(
+                    model,
+                    args,
+                    samples,
+                    exemplars,
+                    outputs,
+                    args.box_threshold,
+                    args.text_threshold,
+                    targets,
+                    tokenized_captions,
+                    input_captions,
+                    predictor=predictor,
+                )
         orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
 
         results = postprocessors["bbox"](outputs, orig_target_sizes)

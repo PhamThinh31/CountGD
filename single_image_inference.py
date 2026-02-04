@@ -136,6 +136,12 @@ def build_model_and_transforms(args):
 
     model.to(device)
 
+    # Upgrade 3: optional torch.compile for speed
+    try:
+        model = torch.compile(model, mode="reduce-overhead", fullgraph=False)
+    except Exception:
+        pass  # Fallback to eager mode silently
+
     checkpoint = torch.load(args.pretrain_model_path, map_location="cpu")["model"]
     model.load_state_dict(checkpoint, strict=False)
 

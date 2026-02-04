@@ -81,6 +81,7 @@ class GroundingDINO(nn.Module):
         text_encoder_type="bert-base-uncased",
         sub_sentence_present=True,
         max_text_len=256,
+        use_density_head=False,
     ):
         """Initializes the model.
         Parameters:
@@ -103,15 +104,22 @@ class GroundingDINO(nn.Module):
         self.query_dim = query_dim
         assert query_dim == 4
 
-        # visual exemplar cropping
+        # visual exemplar cropping — dynamic channels based on backbone
+        backbone_total_channels = sum(backbone.num_channels)
         self.feature_map_proj = nn.Conv2d(
-            (256 + 512 + 1024), hidden_dim, kernel_size=1
+            backbone_total_channels, hidden_dim, kernel_size=1
         )
         self.feature_map_encoder = TransformerEncoder(
             3, hidden_dim, 8, 0.1, 1e-5,
             8, True, nn.GELU, True
         )
         self.feature_map_pos_embed = PositionalEncodingsFixed(hidden_dim)
+
+        # Upgrade 6: Density map auxiliary head (optional)
+        self.use_density_head = use_density_head
+        if use_density_head:
+            from .density_head import DensityHead
+            self.density_head = DensityHead(hidden_dim=hidden_dim)
 
         # for dn training
         self.num_patterns = num_patterns
@@ -418,11 +426,11 @@ class GroundingDINO(nn.Module):
                 poss.append(pos_l)
         
         input_query_bbox = input_query_label = attn_mask = dn_meta = None
-        hs, reference, hs_enc, ref_enc, init_box_proposal = self.transformer(
+        hs, reference, hs_enc, ref_enc, init_box_proposal, encoder_memory = self.transformer(
             srcs, masks, input_query_bbox, poss, input_query_label, attn_mask, text_dict
         )
 
-        
+
         # deformable-detr-like anchor update
         outputs_coord_list = []
         for dec_lid, (layer_ref_sig, layer_bbox_embed, layer_hs) in enumerate(
@@ -443,7 +451,17 @@ class GroundingDINO(nn.Module):
         )
 
         out = {"pred_logits": outputs_class[-1], "pred_boxes": outputs_coord_list[-1]}
-        
+
+        # Upgrade 6: Density map prediction (auxiliary)
+        if self.use_density_head and hasattr(self, 'density_head'):
+            spatial_shapes_list = [(s.shape[2], s.shape[3]) for s in srcs]
+            spatial_shapes_t = torch.as_tensor(spatial_shapes_list, dtype=torch.long, device=srcs[0].device)
+            level_start_index = torch.cat((
+                spatial_shapes_t.new_zeros((1,)),
+                spatial_shapes_t.prod(1).cumsum(0)[:-1]
+            ))
+            density_pred = self.density_head(encoder_memory, spatial_shapes_t, level_start_index)
+            out['density_pred'] = density_pred
 
         # Used to calculate losses
         bs, len_td = text_dict['text_token_mask'].shape
@@ -741,6 +759,18 @@ class SetCriterion(nn.Module):
                 l_dict = {k + f'_interm': v for k, v in l_dict.items()}
                 losses.update(l_dict)
 
+        # Upgrade 6: Density map loss (auxiliary)
+        if 'density_pred' in outputs:
+            from .density_head import generate_density_target
+            density_pred = outputs['density_pred']
+            H, W = density_pred.shape[2], density_pred.shape[3]
+            density_target = generate_density_target(
+                targets, (H, W),
+                sigma=getattr(self, 'density_sigma', 3.0),
+                device=density_pred.device,
+            )
+            losses['loss_density'] = torch.nn.functional.mse_loss(density_pred, density_target)
+
         if return_indices:
             indices_list.append(indices0_copy)
             return losses, indices_list
@@ -864,6 +894,7 @@ def build_groundingdino(args):
         text_encoder_type=args.text_encoder_type,
         sub_sentence_present=sub_sentence_present,
         max_text_len=args.max_text_len,
+        use_density_head=getattr(args, 'use_density_head', False),
     )
 
 
@@ -873,6 +904,10 @@ def build_groundingdino(args):
     # prepare weight dict
     weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_bbox': args.bbox_loss_coef}
     weight_dict['loss_giou'] = args.giou_loss_coef
+
+    # Upgrade 6: density loss weight
+    if getattr(args, 'use_density_head', False):
+        weight_dict['loss_density'] = getattr(args, 'density_loss_coef', 0.5)
     clean_weight_dict_wo_dn = copy.deepcopy(weight_dict)
 
     
@@ -910,6 +945,7 @@ def build_groundingdino(args):
     criterion = SetCriterion(matcher=matcher, weight_dict=weight_dict,
                              focal_alpha=args.focal_alpha, focal_gamma=args.focal_gamma,losses=losses
                              )
+    criterion.density_sigma = getattr(args, 'density_sigma', 3.0)
     criterion.to(device)
     postprocessors = {'bbox': PostProcess(num_select=args.num_select  , text_encoder_type=args.text_encoder_type,nms_iou_threshold=args.nms_iou_threshold,args=args)}
 

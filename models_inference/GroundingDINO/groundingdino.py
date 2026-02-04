@@ -116,6 +116,7 @@ class GroundingDINO(nn.Module):
         sub_sentence_present=True,
         max_text_len=256,
         carpk=False,
+        use_density_head=False,
     ):
         """Initializes the model.
         Parameters:
@@ -140,7 +141,15 @@ class GroundingDINO(nn.Module):
         assert query_dim == 4
 
         # 1x1 convolution to project upsampled and concatenated Multi-scale Swin-T features from (256 + 512 + 1024) = 1792 to 256 channels before cropping out visual exemplar tokens
-        self.feature_map_proj = nn.Conv2d((256 + 512 + 1024), hidden_dim, kernel_size=1)
+        # visual exemplar cropping — dynamic channels based on backbone
+        backbone_total_channels = sum(backbone.num_channels)
+        self.feature_map_proj = nn.Conv2d(backbone_total_channels, hidden_dim, kernel_size=1)
+
+        # Upgrade 6: Density map auxiliary head (optional)
+        self.use_density_head = use_density_head
+        if use_density_head:
+            from .density_head import DensityHead
+            self.density_head = DensityHead(hidden_dim=hidden_dim)
 
         # for dn training
         self.num_patterns = num_patterns
@@ -596,7 +605,7 @@ class GroundingDINO(nn.Module):
                 poss.append(pos_l)
 
         input_query_bbox = input_query_label = attn_mask = dn_meta = None
-        hs, reference, hs_enc, ref_enc, init_box_proposal = self.transformer(
+        hs, reference, hs_enc, ref_enc, init_box_proposal, encoder_memory = self.transformer(
             srcs, masks, input_query_bbox, poss, input_query_label, attn_mask, text_dict
         )
 
@@ -619,6 +628,17 @@ class GroundingDINO(nn.Module):
         )
 
         out = {"pred_logits": outputs_class[-1], "pred_boxes": outputs_coord_list[-1]}
+
+        # Upgrade 6: Density map prediction (auxiliary)
+        if self.use_density_head and hasattr(self, 'density_head'):
+            spatial_shapes_list = [(s.shape[2], s.shape[3]) for s in srcs]
+            spatial_shapes_t = torch.as_tensor(spatial_shapes_list, dtype=torch.long, device=srcs[0].device)
+            level_start_index = torch.cat((
+                spatial_shapes_t.new_zeros((1,)),
+                spatial_shapes_t.prod(1).cumsum(0)[:-1]
+            ))
+            density_pred = self.density_head(encoder_memory, spatial_shapes_t, level_start_index)
+            out['density_pred'] = density_pred
 
         # Used to calculate losses
         bs, len_td = text_dict["text_token_mask"].shape
@@ -1173,6 +1193,7 @@ def build_groundingdino(args):
         text_encoder_type=args.text_encoder_type,
         sub_sentence_present=sub_sentence_present,
         max_text_len=args.max_text_len,
+        use_density_head=getattr(args, 'use_density_head', False),
     )
 
     matcher = build_matcher(args)

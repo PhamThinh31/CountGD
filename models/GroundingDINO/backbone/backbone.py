@@ -205,6 +205,31 @@ def build_backbone(args):
         )
 
         bb_num_channels = backbone.num_features[4 - len(return_interm_indices) :]
+    elif args.backbone.startswith(("swinv2_", "convnextv2_", "focalnet_", "eva02")):
+        # Upgrade 5: Support modern hierarchical backbones via timm.
+        # These all produce multi-scale features natively (~88M params, same VRAM as Swin-B):
+        #   - swinv2_base_window12to24_192to384.ms_in22k_ft_in1k  (Swin-V2-B, 88M)
+        #   - convnextv2_base.fcmae_ft_in22k_in1k_384            (ConvNeXt-V2-B, 89M)
+        #   - focalnet_base_lrf.in1k                              (FocalNet-B, 89M)
+        #   - eva02_large_patch14_448                              (EVA-02-L, 304M — needs more VRAM)
+        if args.backbone.startswith("eva02"):
+            from .eva02_backbone import EVA02Backbone
+            backbone = EVA02Backbone(
+                model_name=args.backbone,
+                pretrained=is_main_process(),
+                out_channels=[256, 512, 1024],
+                freeze=('backbone.0' in (args.freeze_keywords or [])) if hasattr(args, 'freeze_keywords') else True,
+            )
+            bb_num_channels = backbone.num_channels
+        else:
+            from .timm_backbone import TimmBackbone
+            backbone = TimmBackbone(
+                model_name=args.backbone,
+                pretrained=is_main_process(),
+                out_indices=return_interm_indices,
+                freeze=('backbone.0' in (args.freeze_keywords or [])) if hasattr(args, 'freeze_keywords') else True,
+            )
+            bb_num_channels = backbone.num_channels
     else:
         raise NotImplementedError("Unknown backbone {}".format(args.backbone))
 

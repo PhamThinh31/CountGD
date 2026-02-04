@@ -69,6 +69,8 @@ def get_args_parser():
     parser.add_argument("--local-rank", type=int, help='local rank for DistributedDataParallel')
     parser.add_argument('--amp', action='store_true',
                         help="Train with mixed precision")
+    parser.add_argument('--use_torch_compile', action='store_true',
+                        help="Enable torch.compile for faster training/inference")
     return parser
 
 
@@ -144,6 +146,15 @@ def main(args):
     model, criterion, postprocessors = build_model_main(args)
     wo_class_error = False
     model.to(device)
+
+    # Upgrade 3: optional torch.compile for speed
+    if getattr(args, 'use_torch_compile', False):
+        try:
+            model = torch.compile(model, mode="reduce-overhead", fullgraph=False)
+            logger.info("torch.compile applied successfully (mode=reduce-overhead)")
+        except Exception as e:
+            logger.warning(f"torch.compile failed, falling back to eager mode: {e}")
+
     logger.debug("build model, done.")
 
 
@@ -208,6 +219,23 @@ def main(args):
         lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr, steps_per_epoch=len(data_loader_train), epochs=args.epochs, pct_start=0.2)
     elif args.multi_step_lr:
         lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_drop_list)
+    elif getattr(args, 'cosine_lr', False):
+        warmup_epochs = getattr(args, 'cosine_warmup_epochs', 0)
+        cosine_min_lr = getattr(args, 'cosine_lr_min', 1e-6)
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=args.epochs - warmup_epochs, eta_min=cosine_min_lr
+        )
+        if warmup_epochs > 0:
+            warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+                optimizer, start_factor=0.01, total_iters=warmup_epochs
+            )
+            lr_scheduler = torch.optim.lr_scheduler.SequentialLR(
+                optimizer, schedulers=[warmup_scheduler, cosine_scheduler],
+                milestones=[warmup_epochs]
+            )
+        else:
+            lr_scheduler = cosine_scheduler
+        logger.info(f"Using CosineAnnealingLR with {warmup_epochs} warmup epochs, min_lr={cosine_min_lr}")
     else:
         lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
 

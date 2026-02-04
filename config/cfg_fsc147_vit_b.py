@@ -5,6 +5,16 @@ data_aug_scales2_crop = [384, 600]
 data_aug_scale_overlap = None
 batch_size = 4
 modelname = 'groundingdino'
+
+# ===========================================================================
+# Upgrade 5: Backbone Selection
+# Options (all ~88M params, fits on 3090 24GB):
+#   "swin_B_384_22k"                                        — Original (default)
+#   "swinv2_base_window12to24_192to384.ms_in22k_ft_in1k"    — Swin-V2-B (+0.9% ImageNet)
+#   "convnextv2_base.fcmae_ft_in22k_in1k_384"               — ConvNeXt-V2-B (+1.1% ImageNet)
+#   "focalnet_base_lrf.in1k"                                 — FocalNet-B (best for detection)
+#   "eva02_large_patch14_448"                                 — EVA-02-L (304M, needs A100+)
+# ===========================================================================
 backbone = "swin_B_384_22k"
 position_embedding = 'sine'
 pe_temperatureH = 20
@@ -17,7 +27,8 @@ dim_feedforward = 2048
 hidden_dim = 256
 dropout = 0.0
 nheads = 8
-num_queries = 900
+# --- Upgrade 2: Query count (original: 900, reduced: 400) ---
+num_queries = 400
 query_dim = 4
 num_patterns = 0
 num_feature_levels = 4
@@ -56,8 +67,9 @@ lr_linear_proj_names = ['ref_point_head', 'sampling_offsets']
 weight_decay = 0.0001
 param_dict_type = 'ddetr_in_mmdet'
 ddetr_lr_param = False
+# --- Upgrade 4: When cosine_lr=True, consider increasing epochs (original: 30) ---
 epochs = 30
-lr_drop = 10
+lr_drop = 10                         # Only used when cosine_lr=False
 save_checkpoint_interval = 10
 clip_max_norm = 0.1
 onecyclelr = False
@@ -85,16 +97,18 @@ two_stage_add_query_num = 0
 two_stage_learn_wh = False
 two_stage_default_hw = 0.05
 two_stage_keep_all_tokens = False
-num_select = 900
+# --- Upgrade 2: Must match num_queries (original: 900) ---
+num_select = 400
 batch_norm_type = 'FrozenBatchNorm2d'
 masks = False
 aux_loss = True
+# --- Upgrade 1: GIoU loss (set both to 0.0 to disable, 2.0 to enable) ---
 set_cost_class = 5.0
 set_cost_bbox = 1.0
-set_cost_giou = 0.0
+set_cost_giou = 2.0                 # Original: 0.0
 cls_loss_coef = 5.0
 bbox_loss_coef = 1.0
-giou_loss_coef = 0.0
+giou_loss_coef = 2.0                # Original: 0.0
 enc_loss_coef = 1.0
 interm_loss_coef = 1.0
 no_interm_box_loss = False
@@ -110,6 +124,24 @@ dec_pred_class_embed_share = True
 match_unstable_error = True
 use_detached_boxes_dec_out = False
 dn_scalar = 100
+
+# --- Upgrade 3: torch.compile ---
+use_torch_compile = False
+
+# --- Upgrade 4: Cosine LR schedule ---
+cosine_lr = False
+cosine_lr_min = 1e-6
+cosine_warmup_epochs = 2
+
+# --- Upgrade 6: Density map head ---
+use_density_head = False
+density_loss_coef = 0.5
+density_sigma = 3.0
+
+# --- Upgrade 7: Multi-scale TTA ---
+use_multiscale_tta = False
+tta_scales = [0.75, 1.0, 1.25]
+tta_nms_threshold = 0.5
 
 box_threshold = 0.23
 text_threshold = 0
