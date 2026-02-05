@@ -932,6 +932,9 @@ def build_groundingdino(args):
             'loss_bbox': 1.0 if not no_interm_box_loss else 0.0,
             'loss_giou': 1.0 if not no_interm_box_loss else 0.0,
         }
+        # Upgrade 6: density loss should not apply to intermediate (encoder) outputs
+        if getattr(args, 'use_density_head', False):
+            _coeff_weight_dict['loss_density'] = 0.0
         try:
             interm_loss_coef = args.interm_loss_coef
         except:

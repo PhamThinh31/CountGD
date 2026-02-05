@@ -377,7 +377,9 @@ def multiscale_tta_forward(
         pred_cnt: merged count after NMS
     """
     from torchvision.ops import nms
-    import models.GroundingDINO.box_ops as box_ops
+    # import models.GroundingDINO.box_ops as box_ops
+    import util.box_ops as box_ops
+
 
     scales = getattr(args, 'tta_scales', [0.75, 1.0, 1.25])
     tta_nms_thresh = getattr(args, 'tta_nms_threshold', 0.5)
