@@ -126,7 +126,8 @@ use_detached_boxes_dec_out = False
 dn_scalar = 100
 
 # --- Upgrade 3: torch.compile ---
-use_torch_compile = False
+# use_torch_compile is a CLI-only flag (--use_torch_compile), not set in config
+# to avoid argparse collision.
 
 # --- Upgrade 4: Cosine LR schedule ---
 cosine_lr = False
@@ -139,9 +140,8 @@ density_loss_coef = 0.5
 density_sigma = 3.0
 
 # --- Upgrade 7: Multi-scale TTA ---
-use_multiscale_tta = False
-tta_scales = [0.75, 1.0, 1.25]
-tta_nms_threshold = 0.5
+# use_multiscale_tta, tta_scales, tta_nms_threshold are CLI-only flags
+# (--use_multiscale_tta, --tta_scales, --tta_nms_threshold) to avoid argparse collision.
 
 box_threshold = 0.23
 text_threshold = 0
