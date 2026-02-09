@@ -769,7 +769,16 @@ class SetCriterion(nn.Module):
                 sigma=getattr(self, 'density_sigma', 3.0),
                 device=density_pred.device,
             )
-            losses['loss_density'] = torch.nn.functional.mse_loss(density_pred, density_target)
+            # Normalize density target so it sums to object count (prevents vanishing loss)
+            # This ensures the loss magnitude is proportional to count, not spatial resolution
+            B = density_target.shape[0]
+            for b in range(B):
+                target_sum = density_target[b].sum()
+                if target_sum > 1e-6:
+                    num_objects = len(targets[b]['boxes'])
+                    density_target[b] = density_target[b] * (num_objects / target_sum)
+            # Use Smooth L1 loss (more robust than MSE for sparse density maps)
+            losses['loss_density'] = torch.nn.functional.smooth_l1_loss(density_pred, density_target)
 
         if return_indices:
             indices_list.append(indices0_copy)

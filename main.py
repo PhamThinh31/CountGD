@@ -261,7 +261,11 @@ def main(args):
         
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
-            lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+            try:
+                lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+            except (KeyError, TypeError, ValueError) as e:
+                print(f"WARNING: Could not load lr_scheduler state (scheduler type changed?): {e}")
+                print("         Starting with fresh lr_scheduler.")
             args.start_epoch = checkpoint['epoch'] + 1
 
     if (not args.resume) and args.pretrain_model_path:
